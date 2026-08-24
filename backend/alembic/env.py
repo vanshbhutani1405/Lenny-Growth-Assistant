@@ -11,7 +11,8 @@ from app.database.base import Base
 from app.models import Message, Session, TranscriptChunk  # noqa: F401
 
 config = context.config
-config.set_main_option("sqlalchemy.url", get_settings().async_database_url)
+database_url = get_settings().async_database_url.replace("%", "%%")
+config.set_main_option("sqlalchemy.url", database_url)
 if config.config_file_name:
     fileConfig(config.config_file_name)
 

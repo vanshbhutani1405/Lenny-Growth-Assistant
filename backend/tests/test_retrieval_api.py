@@ -12,23 +12,19 @@ async def test_retrieval_api_returns_inspectable_scores_and_metadata(monkeypatch
     from app.main import create_app
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-    class FakeRetrievalService:
+    class FakeRetriever:
         def __init__(self, session):
             pass
 
-        async def search(self, query, top_k, filters):
-            return type("Response", (), {
-                "results": [RetrievedChunk(
+        async def search(self, *, query, top_k, filters):
+            return [RetrievedChunk(
                     "id-1", "episode-1", "evidence", 2,
                     guest="Guest", title="Title", youtube_url="https://example.com",
-                    semantic_score=0.9, keyword_score=0.4, relevance_score=0.725,
-                    retrieval_sources=("semantic", "keyword"),
-                )],
-                "attempted_correction": False,
-                "corrective_query": None,
-            })()
+                    semantic_score=0.9, relevance_score=0.9,
+                    retrieval_sources=("semantic",),
+                )]
 
-    retrieval_api.RetrievalService = FakeRetrievalService
+    retrieval_api.Retriever = FakeRetriever
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     factory = async_sessionmaker(engine, expire_on_commit=False)
 
@@ -43,5 +39,5 @@ async def test_retrieval_api_returns_inspectable_scores_and_metadata(monkeypatch
     await engine.dispose()
     assert response.status_code == 200
     result = response.json()["results"][0]
-    assert result["retrieval_sources"] == ["semantic", "keyword"]
+    assert result["retrieval_sources"] == ["semantic"]
     assert result["youtube_url"] == "https://example.com"

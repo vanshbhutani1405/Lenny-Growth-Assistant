@@ -30,7 +30,7 @@ export type AgentStreamEvent = {
   data: Record<string, any>;
 };
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
+const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000").replace(/\/+$/, "");
 const NGROK_HEADERS = { "ngrok-skip-browser-warning": "true" };
 
 function apiError(body: any, fallback: string): Error {

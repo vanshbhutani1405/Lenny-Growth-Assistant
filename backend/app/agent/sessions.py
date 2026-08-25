@@ -144,6 +144,7 @@ class SessionManager:
             result = await db_session.scalars(select(ConversationSession).order_by(ConversationSession.updated_at.desc()))
             return list(result)
         except SQLAlchemyError as exc:
+            logger.exception("Failed to list conversation sessions from PostgreSQL: %s", exc)
             raise SessionPersistenceError("Could not load conversation sessions.") from exc
 
     async def get_detail(self, session_id: str, db_session: AsyncSession) -> tuple[ConversationSession, list[ConversationMessage]]:
@@ -159,6 +160,7 @@ class SessionManager:
         except SessionNotFoundError:
             raise
         except SQLAlchemyError as exc:
+            logger.exception("Failed to load conversation session from PostgreSQL: session_id=%s error=%s", session_id, exc)
             raise SessionPersistenceError("Could not load the conversation session.") from exc
 
     @staticmethod

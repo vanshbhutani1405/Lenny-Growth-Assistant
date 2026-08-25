@@ -1,11 +1,14 @@
 import asyncio
+import json
 import logging
 from dataclasses import dataclass
 from typing import Any
 
 from app.agent.prompts import AGENT_SYSTEM_PROMPT
 from app.agent.registry import AgentToolRegistry
+from app.agent.ship30 import Ship30Tool
 from app.agent.tools import TranscriptSearchTool
+from app.agent.workflows import WorkflowPlan, WorkflowRouter
 from app.core.config import Settings
 from app.providers.base import LLMProvider, LLMProviderError
 from app.providers.factory import select_local_provider
@@ -36,10 +39,12 @@ class LennyAgent:
         settings: Settings,
         *,
         local_provider: LLMProvider | None = None,
+        workflow_router: WorkflowRouter | None = None,
     ) -> None:
         self.retriever = retriever
         self.settings = settings
         self.local_provider = local_provider if local_provider is not None else select_local_provider(settings)
+        self.workflow_router = workflow_router or WorkflowRouter()
 
     def new_conversation(self, session_id: str) -> "AgentConversation":
         return AgentConversation(self, session_id)
@@ -72,10 +77,11 @@ class LennyAgent:
         query: str,
         top_k: int | None,
         search_tool: TranscriptSearchTool,
+        workflow: WorkflowPlan,
     ) -> AgentAnswer:
         logger.info("Claude generation started: model=%s", self.settings.claude_model)
         answer_parts: list[str] = []
-        await client.query(self._build_prompt(query, top_k))
+        await client.query(workflow.prompt(query, top_k))
         async for message in client.receive_response():
             answer_parts.extend(self._text_blocks(message))
         answer = "\n".join(part for part in answer_parts if part).strip()
@@ -89,6 +95,7 @@ class LennyAgent:
         query: str,
         search_tool: TranscriptSearchTool,
         history: list[tuple[str, str]],
+        workflow: WorkflowPlan,
     ) -> AgentAnswer:
         if self.local_provider is None:
             raise AgentConfigurationError("Ollama provider is not configured")
@@ -112,7 +119,8 @@ class LennyAgent:
                 user_prompt=(
                     f"Prior conversation context (not transcript evidence):\n{prior_context}\n\n"
                     f"Current question:\n{query}\n\n"
-                    f"Current transcript evidence:\n{context}"
+                    f"Current transcript evidence:\n{context}\n\n"
+                    f"Workflow instructions:\n{workflow.instruction}"
                 ),
             )
         except LLMProviderError as exc:
@@ -122,15 +130,6 @@ class LennyAgent:
             raise AgentError("Ollama generation failed") from exc
         logger.info("Ollama generation completed: sources=%d", len(results))
         return AgentAnswer(answer, [self._source_for(chunk) for chunk in results[:5]])
-
-    @staticmethod
-    def _build_prompt(query: str, top_k: int | None) -> str:
-        top_k_instruction = f" Use at most {top_k} results." if top_k is not None else ""
-        return (
-            f"Answer this user question: {query}\n\n"
-            "Search the Lenny transcript corpus first using search_transcripts."
-            f"{top_k_instruction}"
-        )
 
     @staticmethod
     def _bounded_context(results: list[Any], max_chars: int = 12_000) -> str:
@@ -226,15 +225,17 @@ class AgentConversation:
         async with self._lock:
             logger.info("Continuing agent session: session_id=%s", self.session_id)
             provider = getattr(self.agent.settings, "llm_provider", "claude").strip().lower()
+            workflow = self.agent.workflow_router.route(normalized_query)
             try:
                 if provider == "claude":
-                    answer = await self._ask_claude(normalized_query, top_k)
+                    answer = await self._ask_claude(normalized_query, top_k, workflow)
                 elif provider == "ollama":
                     self.search_tool.default_top_k = top_k
                     answer = await self.agent._ask_ollama(
                         normalized_query,
                         self.search_tool,
                         self.history,
+                        workflow,
                     )
                 else:
                     raise AgentConfigurationError(f"Unsupported LLM_PROVIDER: {provider}")
@@ -243,10 +244,22 @@ class AgentConversation:
             except Exception as exc:
                 logger.exception("Agent session request failed: session_id=%s", self.session_id)
                 raise AgentError("Agent session request failed") from exc
+            answer = await self._validate_workflow(
+                normalized_query,
+                top_k,
+                workflow,
+                answer,
+                provider,
+            )
             self.history.append((normalized_query, answer.answer))
             return answer
 
-    async def _ask_claude(self, query: str, top_k: int | None) -> AgentAnswer:
+    async def _ask_claude(
+        self,
+        query: str,
+        top_k: int | None,
+        workflow: WorkflowPlan,
+    ) -> AgentAnswer:
         if self._claude_client is None:
             self._claude_client = self.agent._build_claude_client(self.search_tool)
             await self._claude_client.__aenter__()
@@ -255,7 +268,49 @@ class AgentConversation:
             query,
             top_k,
             self.search_tool,
+            workflow,
         )
+
+    async def _validate_workflow(
+        self,
+        query: str,
+        top_k: int | None,
+        workflow: WorkflowPlan,
+        answer: AgentAnswer,
+        provider: str,
+    ) -> AgentAnswer:
+        if not workflow.requires_ship30_validation or not answer.sources:
+            return answer
+        validator = Ship30Tool()
+        validation = await validator.validate({"draft": answer.answer, "redraft_attempt": 0})
+        payload = self._tool_payload(validation)
+        if payload.get("valid") or not payload.get("redraft_allowed"):
+            return answer
+
+        logger.info("Ship 30 corrective redraft started: session_id=%s", self.session_id)
+        retry_query = (
+            f"{query}\n\nThe first draft failed validation with these issues: "
+            f"{', '.join(payload.get('issues', []))}. Produce one corrected draft only."
+        )
+        if provider == "claude":
+            redraft = await self._ask_claude(retry_query, top_k, workflow)
+        else:
+            redraft = await self.agent._ask_ollama(
+                retry_query,
+                self.search_tool,
+                self.history,
+                workflow,
+            )
+        await validator.validate({"draft": redraft.answer, "redraft_attempt": 1})
+        logger.info("Ship 30 corrective redraft completed: session_id=%s", self.session_id)
+        return redraft
+
+    @staticmethod
+    def _tool_payload(result: dict) -> dict:
+        try:
+            return json.loads(result["content"][0]["text"])
+        except (KeyError, IndexError, TypeError, json.JSONDecodeError):
+            return {"valid": False, "redraft_allowed": False}
 
     async def close(self) -> None:
         if self._closed:

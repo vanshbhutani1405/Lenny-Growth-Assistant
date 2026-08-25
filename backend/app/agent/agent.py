@@ -1,7 +1,7 @@
 import asyncio
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Any
 
 from app.agent.prompts import AGENT_SYSTEM_PROMPT
@@ -80,10 +80,17 @@ class LennyAgent:
         top_k: int | None,
         search_tool: TranscriptSearchTool,
         workflow: WorkflowPlan,
+        history: list[tuple[str, str]] | None = None,
     ) -> AgentAnswer:
         logger.info("Claude generation started: model=%s", self.settings.claude_model)
         answer_parts: list[str] = []
-        await client.query(workflow.prompt(query, top_k))
+        prompt = workflow.prompt(query, top_k)
+        if history:
+            prompt = (
+                "Prior conversation context (not transcript evidence):\n"
+                f"{self._bounded_history(history)}\n\n{prompt}"
+            )
+        await client.query(prompt)
         async for message in client.receive_response():
             answer_parts.extend(self._text_blocks(message))
         answer = "\n".join(part for part in answer_parts if part).strip()
@@ -220,6 +227,19 @@ class AgentConversation:
         self.agent = agent
         self.search_tool.retriever = agent.retriever
 
+    def replace_history(self, history: list[tuple[str, str]]) -> None:
+        """Refresh bounded conversational context from the durable session store."""
+        self.history = history
+
+    def _conversation_prompt(self, workflow: WorkflowPlan, query: str, top_k: int | None) -> str:
+        if not self.history:
+            return workflow.prompt(query, top_k)
+        return (
+            "Prior conversation context (not transcript evidence):\n"
+            f"{self.agent._bounded_history(self.history)}\n\n"
+            f"{workflow.prompt(query, top_k)}"
+        )
+
     async def ask(self, query: str, *, top_k: int | None = None) -> AgentAnswer:
         normalized_query = query.strip()
         if not normalized_query:
@@ -258,6 +278,88 @@ class AgentConversation:
             self.history.append((normalized_query, answer.answer))
             return answer
 
+    async def stream(self, query: str, *, top_k: int | None = None):
+        """Yield provider-neutral generation events after retrieval is complete."""
+        normalized_query = query.strip()
+        if not normalized_query:
+            raise AgentError("query must not be empty")
+        if self._closed:
+            raise AgentError("session is closed")
+        async with self._lock:
+            provider = getattr(self.agent.settings, "llm_provider", "claude").strip().lower()
+            workflow = self.agent.workflow_router.route(normalized_query)
+            logger.info("Starting streamed agent session: session_id=%s", self.session_id)
+            yield {"event": "workflow", "data": {"workflow": workflow.intent.value}}
+            answer_parts: list[str] = []
+            completed = False
+            try:
+                if provider == "claude":
+                    if self._claude_client is None:
+                        self._claude_client = self.agent._build_claude_client(self.search_tool)
+                        await self._claude_client.__aenter__()
+                    await self._claude_client.query(
+                        self._conversation_prompt(workflow, normalized_query, top_k)
+                    )
+                    async for message in self._claude_client.receive_response():
+                        for token in self.agent._text_blocks(message):
+                            answer_parts.append(token)
+                            yield {"event": "token", "data": {"token": token}}
+                elif provider == "ollama":
+                    self.search_tool.default_top_k = top_k
+                    results = await self.search_tool.retrieve({"query": normalized_query})
+                    if not results:
+                        answer_parts.append(
+                            "The available transcript evidence is insufficient to answer this question reliably."
+                        )
+                        yield {"event": "token", "data": {"token": answer_parts[-1]}}
+                    else:
+                        context = self.agent._bounded_context(results)
+                        prior_context = self.agent._bounded_history(self.history)
+                        if self.agent.local_provider is None or not hasattr(
+                            self.agent.local_provider, "stream_generate"
+                        ):
+                            raise AgentConfigurationError("Streaming is not available for the configured provider")
+                        async for token in self.agent.local_provider.stream_generate(
+                            system_prompt=AGENT_SYSTEM_PROMPT,
+                            user_prompt=(
+                                f"Prior conversation context (not transcript evidence):\n{prior_context}\n\n"
+                                f"Current question:\n{normalized_query}\n\n"
+                                f"Current transcript evidence:\n{context}\n\n"
+                                f"Workflow instructions:\n{workflow.instruction}"
+                            ),
+                        ):
+                            answer_parts.append(token)
+                            yield {"event": "token", "data": {"token": token}}
+                else:
+                    raise AgentConfigurationError(f"Unsupported LLM_PROVIDER: {provider}")
+
+                answer = "".join(answer_parts).strip()
+                if not answer:
+                    raise AgentError("Provider returned an empty streamed answer")
+                if workflow.requires_ship30_validation:
+                    validation = await Ship30Tool().validate({"draft": answer, "redraft_attempt": 0})
+                    yield {"event": "validation", "data": self._tool_payload(validation)}
+                sources = [asdict(self.agent._source_for(chunk)) for chunk in self.search_tool.last_results]
+                yield {"event": "sources", "data": {"sources": sources}}
+                yield {"event": "done", "data": {"workflow": workflow.intent.value}}
+                self.history.append((normalized_query, answer))
+                completed = True
+            except AgentError:
+                raise
+            except Exception as exc:
+                logger.exception("Streamed agent session failed: session_id=%s", self.session_id)
+                raise AgentError("Streamed agent request failed") from exc
+            finally:
+                if not completed:
+                    logger.info("Streamed agent session ended without completion: session_id=%s", self.session_id)
+
+    @staticmethod
+    def _tool_payload(result: dict) -> dict:
+        try:
+            return json.loads(result["content"][0]["text"])
+        except (KeyError, IndexError, TypeError, json.JSONDecodeError):
+            return {"valid": False, "redraft_allowed": False}
+
     async def _ask_claude(
         self,
         query: str,
@@ -273,6 +375,7 @@ class AgentConversation:
             top_k,
             self.search_tool,
             workflow,
+            self.history,
         )
 
     async def _validate_workflow(

@@ -15,5 +15,6 @@ def select_local_provider(settings: Settings) -> LLMProvider | None:
         return OllamaProvider(
             base_url=settings.ollama_base_url,
             model=settings.ollama_model,
+            timeout_seconds=settings.ollama_timeout_seconds,
         )
     raise ProviderConfigurationError(f"Unsupported LLM_PROVIDER: {provider}")

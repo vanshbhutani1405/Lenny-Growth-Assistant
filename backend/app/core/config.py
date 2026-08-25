@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     llm_provider: str = Field(default="ollama", validation_alias="LLM_PROVIDER")
     ollama_base_url: str = Field(default="http://localhost:11434", validation_alias="OLLAMA_BASE_URL")
     ollama_model: str = Field(default="llama3.2:1b", validation_alias="OLLAMA_MODEL")
+    ollama_timeout_seconds: float = Field(default=300.0, gt=0, validation_alias="OLLAMA_TIMEOUT_SECONDS")
     langchain_tracing_v2: bool = Field(default=False, validation_alias="LANGCHAIN_TRACING_V2")
     langchain_api_key: str | None = Field(default=None, validation_alias="LANGCHAIN_API_KEY")
     langchain_project: str = Field(default="lenny-growth-assistant", validation_alias="LANGCHAIN_PROJECT")

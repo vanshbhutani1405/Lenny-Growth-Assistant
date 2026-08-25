@@ -822,3 +822,9 @@ The product is considered complete when:
 | Artifact security | Sanitization + sandboxed/isolation rendering | Safe generated HTML |
 | Testing | Automated tests + RAG benchmark + manual UI plan | Reliability and evaluation |
 | Deployment | Docker Compose / reproducible workflow | Local setup and handoff |
+
+## Implementation status addendum
+
+This PRD remains the target specification; it is not a claim that every acceptance criterion has been completed. The current documented implementation includes the selected indexed transcript corpus, hybrid/corrective RAG, Claude Agent SDK and Ollama provider paths, the three tool/workflow capabilities, provider-neutral 24-hour in-memory sessions, SSE generation streaming, the React frontend, and optional LangSmith tracing.
+
+The following requirements remain explicit verification or follow-up items unless demonstrated separately: durable PostgreSQL conversation persistence, authenticated session ownership, artifact HTML sanitization/isolation verification, a reproducible deployment workflow, the 15–20 question benchmark and its measured grounding rate, and final screenshots/architecture imagery. See `README.md`, `manual-testing.md`, `security.md`, and `technical-decisions.md` for the current boundaries.

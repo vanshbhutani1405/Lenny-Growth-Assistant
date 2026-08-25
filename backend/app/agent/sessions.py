@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 from sqlalchemy import delete, func, select, update
@@ -34,8 +34,11 @@ class SessionState:
 class SessionManager:
     """PostgreSQL-backed sessions with an in-memory conversation optimization."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, ttl_hours: int = 24) -> None:
+        if ttl_hours <= 0:
+            raise ValueError("ttl_hours must be positive")
         self._sessions: dict[str, SessionState] = {}
+        self._ttl = timedelta(hours=ttl_hours)
 
     async def create(self, agent: LennyAgent, db_session: AsyncSession, *, user_metadata: dict | None = None) -> SessionState:
         session_id = str(uuid4())
@@ -53,6 +56,9 @@ class SessionManager:
     async def get(self, session_id: str, agent: LennyAgent, db_session: AsyncSession) -> SessionState:
         _, messages = await self._load(session_id, db_session)
         state = self._sessions.get(session_id)
+        if state is not None and datetime.now(UTC) - state.last_accessed_at >= self._ttl:
+            await self._evict_memory_state(session_id, state)
+            state = None
         if state is None or state.conversation._closed:
             state = SessionState(session_id, agent.new_conversation(session_id))
             self._sessions[session_id] = state
@@ -62,6 +68,25 @@ class SessionManager:
         state.last_accessed_at = datetime.now(UTC)
         logger.info("Persistent session continued: session_id=%s messages=%d", session_id, len(messages))
         return state
+
+    async def cleanup_expired(self) -> int:
+        """Evict stale in-memory provider contexts without deleting durable history."""
+        now = datetime.now(UTC)
+        expired = [
+            (session_id, state)
+            for session_id, state in self._sessions.items()
+            if now - state.last_accessed_at >= self._ttl
+        ]
+        for session_id, state in expired:
+            await self._evict_memory_state(session_id, state)
+        if expired:
+            logger.info("Expired in-memory sessions cleaned up: count=%d", len(expired))
+        return len(expired)
+
+    async def _evict_memory_state(self, session_id: str, state: SessionState) -> None:
+        self._sessions.pop(session_id, None)
+        await state.conversation.close()
+        logger.info("In-memory session context evicted: session_id=%s", session_id)
 
     async def get_or_create(self, session_id: str | None, agent: LennyAgent, db_session: AsyncSession) -> SessionState:
         return await self.create(agent, db_session) if session_id is None else await self.get(session_id, agent, db_session)

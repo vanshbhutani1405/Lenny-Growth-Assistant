@@ -31,6 +31,7 @@ export type AgentStreamEvent = {
 };
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
+const NGROK_HEADERS = { "ngrok-skip-browser-warning": "true" };
 
 function apiError(body: any, fallback: string): Error {
   const message = body?.detail?.message ?? body?.detail ?? fallback;
@@ -40,7 +41,7 @@ function apiError(body: any, fallback: string): Error {
 export async function askAgent(query: string, sessionId?: string): Promise<AgentResponse> {
   const response = await fetch(`${API_BASE}/api/v1/agent/ask`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { ...NGROK_HEADERS, "Content-Type": "application/json" },
     body: JSON.stringify({ query, session_id: sessionId || undefined }),
   });
   const body = await response.json().catch(() => ({}));
@@ -49,21 +50,24 @@ export async function askAgent(query: string, sessionId?: string): Promise<Agent
 }
 
 export async function clearSession(sessionId: string): Promise<void> {
-  const response = await fetch(`${API_BASE}/api/v1/agent/sessions/${sessionId}`, { method: "DELETE" });
+  const response = await fetch(`${API_BASE}/api/v1/agent/sessions/${sessionId}`, {
+    method: "DELETE",
+    headers: NGROK_HEADERS,
+  });
   if (!response.ok && response.status !== 404) {
     throw new Error("Could not delete this conversation.");
   }
 }
 
 export async function listSessions(): Promise<SessionSummary[]> {
-  const response = await fetch(`${API_BASE}/api/v1/agent/sessions`);
+  const response = await fetch(`${API_BASE}/api/v1/agent/sessions`, { headers: NGROK_HEADERS });
   const body = await response.json().catch(() => ({}));
   if (!response.ok) throw apiError(body, "Could not load saved conversations.");
   return body as SessionSummary[];
 }
 
 export async function getSession(sessionId: string): Promise<SessionDetail> {
-  const response = await fetch(`${API_BASE}/api/v1/agent/sessions/${sessionId}`);
+  const response = await fetch(`${API_BASE}/api/v1/agent/sessions/${sessionId}`, { headers: NGROK_HEADERS });
   const body = await response.json().catch(() => ({}));
   if (!response.ok) throw apiError(body, "Could not load this conversation.");
   return body as SessionDetail;
@@ -72,7 +76,7 @@ export async function getSession(sessionId: string): Promise<SessionDetail> {
 export async function* streamAgent(query: string, sessionId?: string): AsyncGenerator<AgentStreamEvent> {
   const response = await fetch(`${API_BASE}/api/v1/agent/ask/stream`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+    headers: { ...NGROK_HEADERS, "Content-Type": "application/json", Accept: "text/event-stream" },
     body: JSON.stringify({ query, session_id: sessionId || undefined }),
   });
   if (!response.ok || !response.body) {

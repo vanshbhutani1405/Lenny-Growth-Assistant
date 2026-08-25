@@ -14,6 +14,8 @@ class Settings(BaseSettings):
     chunk_overlap_words: int = Field(default=60, validation_alias="CHUNK_OVERLAP_WORDS")
     retrieval_top_k: int = Field(default=8, validation_alias="RETRIEVAL_TOP_K")
     retrieval_min_score: float = Field(default=0.18, validation_alias="RETRIEVAL_MIN_SCORE")
+    anthropic_api_key: str | None = Field(default=None, validation_alias="ANTHROPIC_API_KEY")
+    claude_model: str = Field(default="claude-sonnet-4-5", validation_alias="CLAUDE_MODEL")
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 

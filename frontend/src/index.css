@@ -1,0 +1,19 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root { color: #172033; background: #f8fafc; font-synthesis: none; }
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 320px; background: #f8fafc; }
+button, textarea { font: inherit; }
+::selection { background: #d9e7ff; color: #10234b; }
+.markdown p { margin: 0 0 0.9rem; }
+.markdown p:last-child { margin-bottom: 0; }
+.markdown h1, .markdown h2, .markdown h3 { color: #172033; font-weight: 700; line-height: 1.25; margin: 1.3rem 0 .65rem; }
+.markdown h1 { font-size: 1.65rem; }.markdown h2 { font-size: 1.3rem; }.markdown h3 { font-size: 1.1rem; }
+.markdown ul, .markdown ol { margin: .75rem 0 1rem 1.25rem; padding: 0; }
+.markdown li { margin: .3rem 0; }
+.markdown blockquote { border-left: 3px solid #c4d4ee; color: #536078; margin: 1rem 0; padding-left: 1rem; }
+.markdown code { background: #f1f4f8; border-radius: .35rem; font-size: .88em; padding: .15rem .35rem; }
+.markdown pre { background: #172033; border-radius: .65rem; color: #e9effb; overflow-x: auto; padding: 1rem; }
+.markdown pre code { background: transparent; padding: 0; }

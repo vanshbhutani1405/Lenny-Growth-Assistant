@@ -1,7 +1,5 @@
 import json
 import logging
-from dataclasses import asdict
-
 from pydantic import BaseModel, Field, ValidationError
 
 from app.rag.retriever import Retriever
@@ -28,23 +26,25 @@ class TranscriptSearchTool:
     async def search(self, arguments: dict) -> dict:
         logger.info("Agent transcript search tool invoked")
         try:
-            parsed = TranscriptSearchArguments.model_validate(arguments)
+            results = await self.retrieve(arguments)
         except ValidationError as exc:
             logger.warning("Invalid transcript search tool arguments")
             return self._text_result({"error": "invalid_arguments", "details": exc.errors()})
-
-        try:
-            self.last_results = await self.retriever.search(
-                parsed.query,
-                top_k=parsed.top_k if parsed.top_k is not None else self.default_top_k,
-                filters={"episode_slug": parsed.episode, "guest": parsed.guest},
-            )
         except Exception as exc:
             logger.exception("Agent transcript search tool failed")
             return self._text_result({"error": "retrieval_unavailable", "message": str(exc)})
 
+        return self._text_result({"results": [self._serialize_result(item) for item in results]})
+
+    async def retrieve(self, arguments: dict) -> list[RetrievedChunk]:
+        parsed = TranscriptSearchArguments.model_validate(arguments)
+        self.last_results = await self.retriever.search(
+            parsed.query,
+            top_k=parsed.top_k if parsed.top_k is not None else self.default_top_k,
+            filters={"episode_slug": parsed.episode, "guest": parsed.guest},
+        )
         logger.info("Agent transcript search returned %d chunks", len(self.last_results))
-        return self._text_result({"results": [self._serialize_result(item) for item in self.last_results]})
+        return self.last_results
 
     @staticmethod
     def _serialize_result(chunk: RetrievedChunk) -> dict:

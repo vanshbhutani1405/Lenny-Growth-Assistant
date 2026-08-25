@@ -16,6 +16,9 @@ class Settings(BaseSettings):
     retrieval_min_score: float = Field(default=0.18, validation_alias="RETRIEVAL_MIN_SCORE")
     anthropic_api_key: str | None = Field(default=None, validation_alias="ANTHROPIC_API_KEY")
     claude_model: str = Field(default="claude-sonnet-4-5", validation_alias="CLAUDE_MODEL")
+    llm_provider: str = Field(default="ollama", validation_alias="LLM_PROVIDER")
+    ollama_base_url: str = Field(default="http://localhost:11434", validation_alias="OLLAMA_BASE_URL")
+    ollama_model: str = Field(default="llama3.2:3b", validation_alias="OLLAMA_MODEL")
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 

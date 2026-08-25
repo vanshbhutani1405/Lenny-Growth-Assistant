@@ -14,7 +14,8 @@ router = APIRouter(prefix="/agent", tags=["agent"])
 
 
 def get_lenny_agent(session: AsyncSession = Depends(get_db_session)) -> LennyAgent:
-    return LennyAgent(Retriever(session), get_settings())
+    settings = get_settings()
+    return LennyAgent(Retriever(session), settings)
 
 
 @router.post("/ask", response_model=AgentAskResponse)

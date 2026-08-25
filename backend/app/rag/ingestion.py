@@ -43,12 +43,13 @@ async def ingest_corpus(
     pending: list[TranscriptChunk] = []
     total_chunks = 0
     persisted_chunks = 0
+    batches_persisted = 0
 
     logger.info("Starting ingestion: documents=%d batch_size=%d", len(documents), batch_size)
     for document_index, document in enumerate(documents, start=1):
         chunks = chunk_transcript(document.text, chunk_size_words=chunk_size, overlap_words=overlap)
         logger.info(
-            "Embedding document %d/%d: episode=%s chunks=%d",
+            "Processing document %d/%d: episode=%s chunks_generated=%d",
             document_index,
             len(documents),
             document.episode_slug,
@@ -73,16 +74,35 @@ async def ingest_corpus(
             total_chunks += 1
             if len(pending) >= batch_size:
                 await _persist_batch(session, pending)
+                batches_persisted += 1
                 persisted_chunks += len(pending)
-                logger.info("Committed ingestion batch: chunks=%d", persisted_chunks)
+                logger.info(
+                    "Persisted batch %d: batch_chunks=%d cumulative_chunks_persisted=%d",
+                    batches_persisted,
+                    len(pending),
+                    persisted_chunks,
+                )
                 pending.clear()
 
     if pending:
         await _persist_batch(session, pending)
+        batches_persisted += 1
         persisted_chunks += len(pending)
-        logger.info("Committed final ingestion batch: chunks=%d", persisted_chunks)
+        logger.info(
+            "Persisted batch %d: batch_chunks=%d cumulative_chunks_persisted=%d",
+            batches_persisted,
+            len(pending),
+            persisted_chunks,
+        )
 
-    logger.info("Ingestion complete: documents=%d chunks=%d", len(documents), total_chunks)
+    logger.info(
+        "Ingestion complete: documents=%d chunks_generated=%d batches_persisted=%d "
+        "cumulative_chunks_persisted=%d",
+        len(documents),
+        total_chunks,
+        batches_persisted,
+        persisted_chunks,
+    )
     return IngestionStats(len(documents), total_chunks, persisted_chunks)
 
 

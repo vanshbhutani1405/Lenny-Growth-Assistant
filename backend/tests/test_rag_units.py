@@ -1,4 +1,5 @@
 from datetime import date
+import logging
 from pathlib import Path
 
 import pytest
@@ -67,7 +68,7 @@ def test_embedding_service_reuses_model_and_validates_shape():
     class FakeModel:
         calls = 0
 
-        def get_sentence_embedding_dimension(self):
+        def get_embedding_dimension(self):
             return 3
 
         def encode(self, texts, **kwargs):
@@ -117,8 +118,9 @@ def test_persistence_statement_is_postgres_upsert():
 
 
 @pytest.mark.asyncio
-async def test_ingestion_is_idempotent_with_deterministic_upsert(tmp_path, monkeypatch):
+async def test_ingestion_is_idempotent_with_deterministic_upsert(tmp_path, monkeypatch, caplog):
     monkeypatch.setenv("DATABASE_URL", "sqlite+aiosqlite:///:memory:")
+    caplog.set_level(logging.INFO, logger="app.rag.ingestion")
     corpus = tmp_path / "episode.json"
     corpus.write_text('{"episode":"ep","text":""' + '"}', encoding="utf-8")
     corpus.write_text('{"episode":"ep","guest":"G","text":"' + "useful " * 40 + '"}', encoding="utf-8")
@@ -149,6 +151,9 @@ async def test_ingestion_is_idempotent_with_deterministic_upsert(tmp_path, monke
     assert len(session.executed) == 2
     assert session.commit_calls == 2
     assert session.rollback_calls == 0
+    assert any("Processing document 1/1" in record.message for record in caplog.records)
+    assert any("Persisted batch 1" in record.message for record in caplog.records)
+    assert any("Ingestion complete" in record.message for record in caplog.records)
 
 
 @pytest.mark.asyncio

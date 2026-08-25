@@ -1,7 +1,10 @@
 from functools import lru_cache
+import logging
 from typing import Any
 
 from app.core.config import get_settings
+
+logger = logging.getLogger(__name__)
 
 
 class EmbeddingService:
@@ -22,7 +25,7 @@ class EmbeddingService:
                     "sentence-transformers is required for local embeddings"
                 ) from exc
             self._model = SentenceTransformer(self.model_name)
-            actual_dimension = self._model.get_sentence_embedding_dimension()
+            actual_dimension = self._model.get_embedding_dimension()
             if actual_dimension != self.dimension:
                 raise ValueError(
                     f"Embedding dimension mismatch: configured {self.dimension}, model returned {actual_dimension}"
@@ -32,10 +35,27 @@ class EmbeddingService:
     def embed(self, texts: list[str]) -> list[list[float]]:
         if not texts:
             return []
-        vectors = self._load_model().encode(
+        batch_size = 32
+        model = self._load_model()
+        device = getattr(model, "device", "unknown")
+        logger.info(
+            "Starting SentenceTransformer.encode: model=%s device=%s chunks=%d batch_size=%d",
+            self.model_name,
+            device,
+            len(texts),
+            batch_size,
+        )
+        vectors = model.encode(
             texts,
+            batch_size=batch_size,
             normalize_embeddings=True,
             show_progress_bar=False,
+        )
+        logger.info(
+            "Completed SentenceTransformer.encode: model=%s device=%s chunks=%d",
+            self.model_name,
+            device,
+            len(texts),
         )
         return [list(map(float, vector)) for vector in vectors]
 

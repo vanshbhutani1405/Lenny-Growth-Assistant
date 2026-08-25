@@ -1,12 +1,19 @@
 import argparse
 import asyncio
+import logging
 from pathlib import Path
 
+from app.core.config import get_settings
 from app.database.session import session_factory
 from app.rag.ingestion import ingest_corpus
 
 
 def main() -> None:
+    settings = get_settings()
+    logging.basicConfig(
+        level=getattr(logging, settings.log_level.upper(), logging.INFO),
+        format="%(asctime)s %(levelname)s %(name)s - %(message)s",
+    )
     parser = argparse.ArgumentParser(description="Ingest Lenny transcript files into PostgreSQL/pgvector")
     parser.add_argument("corpus", type=Path, help="Transcript file or directory")
     args = parser.parse_args()

@@ -16,6 +16,7 @@ class RagSource(BaseModel):
     chunk_index: int
     similarity_score: float
     youtube_url: str | None
+    evidence: str | None = None
 
 
 class RagAskResponse(BaseModel):

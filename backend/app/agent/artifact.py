@@ -6,6 +6,7 @@ from html.parser import HTMLParser
 from typing import Any
 
 from pydantic import BaseModel, Field, ValidationError
+from app.observability.tracing import traced
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +83,7 @@ class ArtifactTool:
         "required": ["title", "format", "content"],
     }
 
+    @traced("agent.tool.create_artifact", run_type="tool")
     async def create(self, arguments: dict[str, Any]) -> dict:
         try:
             parsed = ArtifactArguments.model_validate(arguments)

@@ -9,6 +9,7 @@ from app.core.config import Settings, get_settings
 from app.models.transcript_chunk import TranscriptChunk
 from app.rag.embeddings import EmbeddingService, get_embedding_service
 from app.rag.types import RetrievedChunk
+from app.observability.tracing import traced
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +35,7 @@ class Retriever:
         object.__setattr__(self, "embedding_service", embedding_service or get_embedding_service())
         object.__setattr__(self, "settings", settings or get_settings())
 
+    @traced("rag.retriever.search", run_type="retriever")
     async def search(
         self,
         query: str,

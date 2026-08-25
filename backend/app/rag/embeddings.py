@@ -3,6 +3,7 @@ import logging
 from typing import Any
 
 from app.core.config import get_settings
+from app.observability.tracing import traced
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +60,7 @@ class EmbeddingService:
         )
         return [list(map(float, vector)) for vector in vectors]
 
+    @traced("rag.embeddings.embed_query", run_type="embedding")
     def embed_query(self, query: str) -> list[float]:
         return self.embed([query])[0]
 

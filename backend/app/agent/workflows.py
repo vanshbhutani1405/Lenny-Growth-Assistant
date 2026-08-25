@@ -2,6 +2,8 @@ import logging
 from dataclasses import dataclass
 from enum import StrEnum
 
+from app.observability.tracing import traced
+
 logger = logging.getLogger(__name__)
 
 
@@ -31,6 +33,7 @@ class WorkflowRouter:
         "themes", "across episodes", "what do multiple", "summarize the advice",
     )
 
+    @traced("agent.workflow.route", run_type="chain")
     def route(self, query: str) -> WorkflowPlan:
         normalized = " ".join(query.lower().split())
         if any(term in normalized for term in self._ship30_terms):

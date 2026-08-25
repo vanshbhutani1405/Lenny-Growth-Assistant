@@ -3,6 +3,7 @@ import re
 from typing import Any
 
 from pydantic import BaseModel, Field, ValidationError
+from app.observability.tracing import traced
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +30,7 @@ class Ship30Tool:
         "required": ["draft"],
     }
 
+    @traced("agent.tool.validate_ship30_draft", run_type="tool")
     async def validate(self, arguments: dict[str, Any]) -> dict:
         try:
             parsed = Ship30ValidationArguments.model_validate(arguments)

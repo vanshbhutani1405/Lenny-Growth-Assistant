@@ -10,6 +10,7 @@ from app.database.session import get_db_session
 from app.rag.retriever import Retriever
 from app.schemas.agent import AgentAskRequest, AgentAskResponse
 from app.schemas.rag import RagSource
+from app.observability.tracing import traced
 
 router = APIRouter(prefix="/agent", tags=["agent"])
 
@@ -20,6 +21,7 @@ def get_lenny_agent(session: AsyncSession = Depends(get_db_session)) -> LennyAge
 
 
 @router.post("/ask", response_model=AgentAskResponse)
+@traced("api.agent.ask", run_type="chain")
 async def ask_agent(
     request: AgentAskRequest,
     agent: LennyAgent = Depends(get_lenny_agent),

@@ -18,7 +18,11 @@ class Settings(BaseSettings):
     claude_model: str = Field(default="claude-sonnet-4-5", validation_alias="CLAUDE_MODEL")
     llm_provider: str = Field(default="ollama", validation_alias="LLM_PROVIDER")
     ollama_base_url: str = Field(default="http://localhost:11434", validation_alias="OLLAMA_BASE_URL")
-    ollama_model: str = Field(default="llama3.2:3b", validation_alias="OLLAMA_MODEL")
+    ollama_model: str = Field(default="llama3.2:1b", validation_alias="OLLAMA_MODEL")
+    langchain_tracing_v2: bool = Field(default=False, validation_alias="LANGCHAIN_TRACING_V2")
+    langchain_api_key: str | None = Field(default=None, validation_alias="LANGCHAIN_API_KEY")
+    langchain_project: str = Field(default="lenny-growth-assistant", validation_alias="LANGCHAIN_PROJECT")
+    frontend_origin: str = Field(default="http://localhost:5173", validation_alias="FRONTEND_ORIGIN")
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 

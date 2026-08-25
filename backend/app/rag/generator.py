@@ -37,6 +37,7 @@ class SourceCitation:
     chunk_index: int
     similarity_score: float
     youtube_url: str | None = None
+    evidence: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -153,4 +154,5 @@ class GroundedAnswerGenerator:
             chunk_index=chunk.chunk_index,
             similarity_score=chunk.relevance_score,
             youtube_url=chunk.youtube_url,
+            evidence=chunk.chunk_text,
         )

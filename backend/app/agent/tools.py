@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from app.rag.retriever import Retriever
 from app.rag.types import RetrievedChunk
+from app.observability.tracing import traced
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +24,7 @@ class TranscriptSearchTool:
         self.default_top_k = default_top_k
         self.last_results: list[RetrievedChunk] = []
 
+    @traced("agent.tool.search_transcripts", run_type="tool")
     async def search(self, arguments: dict) -> dict:
         logger.info("Agent transcript search tool invoked")
         try:

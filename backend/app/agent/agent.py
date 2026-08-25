@@ -9,6 +9,7 @@ from app.agent.registry import AgentToolRegistry
 from app.agent.ship30 import Ship30Tool
 from app.agent.tools import TranscriptSearchTool
 from app.agent.workflows import WorkflowPlan, WorkflowRouter
+from app.observability.tracing import traced
 from app.core.config import Settings
 from app.providers.base import LLMProvider, LLMProviderError
 from app.providers.factory import select_local_provider
@@ -71,6 +72,7 @@ class LennyAgent:
         )
         return client_class(options=options)
 
+    @traced("provider.claude.generate", run_type="llm")
     async def _run_claude_query(
         self,
         client: Any,
@@ -90,6 +92,7 @@ class LennyAgent:
         logger.info("Claude generation completed: sources=%d", len(search_tool.last_results))
         return AgentAnswer(answer, [self._source_for(chunk) for chunk in search_tool.last_results])
 
+    @traced("provider.ollama.agent_workflow", run_type="chain")
     async def _ask_ollama(
         self,
         query: str,
@@ -197,6 +200,7 @@ class LennyAgent:
             chunk_index=chunk.chunk_index,
             similarity_score=chunk.relevance_score,
             youtube_url=chunk.youtube_url,
+            evidence=chunk.chunk_text,
         )
 
 

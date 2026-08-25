@@ -5,6 +5,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from app.providers.base import LLMProviderError
+from app.observability.tracing import traced
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +22,7 @@ class OllamaProvider:
         self.model = model
         self.timeout_seconds = timeout_seconds
 
+    @traced("provider.ollama.generate", run_type="llm")
     async def generate(self, *, system_prompt: str, user_prompt: str) -> str:
         payload = {
             "model": self.model,

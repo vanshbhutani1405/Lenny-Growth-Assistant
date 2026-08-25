@@ -1,24 +1,26 @@
+import asyncio
 import logging
 from dataclasses import dataclass
 from typing import Any
 
 from app.agent.prompts import AGENT_SYSTEM_PROMPT
+from app.agent.registry import AgentToolRegistry
 from app.agent.tools import TranscriptSearchTool
 from app.core.config import Settings
-from app.rag.retriever import Retriever
-from app.rag.generator import SourceCitation
 from app.providers.base import LLMProvider, LLMProviderError
 from app.providers.factory import select_local_provider
+from app.rag.generator import SourceCitation
+from app.rag.retriever import Retriever
 
 logger = logging.getLogger(__name__)
 
 
 class AgentError(RuntimeError):
-    """Raised when the Claude Agent SDK workflow cannot complete."""
+    """Raised when an agent request cannot complete."""
 
 
 class AgentConfigurationError(AgentError):
-    """Raised when Claude configuration or the SDK is unavailable."""
+    """Raised when Claude or the configured provider is unavailable."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,56 +41,55 @@ class LennyAgent:
         self.settings = settings
         self.local_provider = local_provider if local_provider is not None else select_local_provider(settings)
 
+    def new_conversation(self, session_id: str) -> "AgentConversation":
+        return AgentConversation(self, session_id)
+
     async def ask(self, query: str, *, top_k: int | None = None) -> AgentAnswer:
-        normalized_query = query.strip()
-        if not normalized_query:
-            raise AgentError("query must not be empty")
+        """Preserve the stateless interface for callers that do not need a session."""
+        conversation = self.new_conversation("ephemeral")
+        try:
+            return await conversation.ask(query, top_k=top_k)
+        finally:
+            await conversation.close()
 
-        logger.info("Agent request received: query_length=%d", len(normalized_query))
-        search_tool = TranscriptSearchTool(self.retriever, default_top_k=top_k)
-        provider = getattr(self.settings, "llm_provider", "claude").strip().lower()
-        if provider == "ollama":
-            return await self._ask_ollama(normalized_query, search_tool)
-        if provider != "claude":
-            raise AgentConfigurationError(f"Unsupported LLM_PROVIDER: {self.settings.llm_provider}")
-        return await self._ask_claude(normalized_query, top_k, search_tool)
+    def _build_claude_client(self, search_tool: TranscriptSearchTool) -> Any:
+        client_class, tool_decorator, server_factory, options_class = self._sdk_api()
+        registry = AgentToolRegistry(search_tool)
+        sdk_tools = registry.sdk_tools(tool_decorator)
+        server = server_factory(name="lenny-tools", tools=sdk_tools)
+        options = options_class(
+            model=self.settings.claude_model,
+            system_prompt=AGENT_SYSTEM_PROMPT,
+            max_turns=3,
+            mcp_servers={"lenny": server},
+            allowed_tools=registry.allowed_tool_names,
+        )
+        return client_class(options=options)
 
-    async def _ask_claude(
+    async def _run_claude_query(
         self,
+        client: Any,
         query: str,
         top_k: int | None,
         search_tool: TranscriptSearchTool,
     ) -> AgentAnswer:
-        try:
-            client_class, tool_decorator, server_factory, options_class = self._sdk_api()
-            sdk_tool = self._make_sdk_tool(tool_decorator, search_tool)
-            server = server_factory(name="lenny-transcripts", tools=[sdk_tool])
-            options = options_class(
-                model=self.settings.claude_model,
-                system_prompt=AGENT_SYSTEM_PROMPT,
-                max_turns=3,
-                mcp_servers={"lenny": server},
-                allowed_tools=["mcp__lenny__search_transcripts"],
-            )
+        logger.info("Claude generation started: model=%s", self.settings.claude_model)
+        answer_parts: list[str] = []
+        await client.query(self._build_prompt(query, top_k))
+        async for message in client.receive_response():
+            answer_parts.extend(self._text_blocks(message))
+        answer = "\n".join(part for part in answer_parts if part).strip()
+        if not answer:
+            raise AgentError("Claude returned an empty answer")
+        logger.info("Claude generation completed: sources=%d", len(search_tool.last_results))
+        return AgentAnswer(answer, [self._source_for(chunk) for chunk in search_tool.last_results])
 
-            logger.info("Claude generation started: model=%s", self.settings.claude_model)
-            answer_parts: list[str] = []
-            async with client_class(options=options) as client:
-                await client.query(self._build_prompt(query, top_k))
-                async for message in client.receive_response():
-                    answer_parts.extend(self._text_blocks(message))
-            answer = "\n".join(part for part in answer_parts if part).strip()
-            if not answer:
-                raise AgentError("Claude returned an empty answer")
-            logger.info("Claude generation completed: sources=%d", len(search_tool.last_results))
-            return AgentAnswer(answer, [self._source_for(chunk) for chunk in search_tool.last_results])
-        except AgentError:
-            raise
-        except Exception as exc:
-            logger.exception("Claude Agent SDK workflow failed")
-            raise AgentError("Claude Agent SDK request failed") from exc
-
-    async def _ask_ollama(self, query: str, search_tool: TranscriptSearchTool) -> AgentAnswer:
+    async def _ask_ollama(
+        self,
+        query: str,
+        search_tool: TranscriptSearchTool,
+        history: list[tuple[str, str]],
+    ) -> AgentAnswer:
         if self.local_provider is None:
             raise AgentConfigurationError("Ollama provider is not configured")
         logger.info("Ollama agent retrieval started")
@@ -104,12 +105,14 @@ class LennyAgent:
                 [],
             )
         context = self._bounded_context(results)
+        prior_context = self._bounded_history(history)
         try:
             answer = await self.local_provider.generate(
                 system_prompt=AGENT_SYSTEM_PROMPT,
                 user_prompt=(
-                    f"Answer this question using only the transcript evidence below:\n{query}\n\n"
-                    f"{context}"
+                    f"Prior conversation context (not transcript evidence):\n{prior_context}\n\n"
+                    f"Current question:\n{query}\n\n"
+                    f"Current transcript evidence:\n{context}"
                 ),
             )
         except LLMProviderError as exc:
@@ -117,7 +120,17 @@ class LennyAgent:
         except Exception as exc:
             logger.exception("Ollama agent generation failed")
             raise AgentError("Ollama generation failed") from exc
+        logger.info("Ollama generation completed: sources=%d", len(results))
         return AgentAnswer(answer, [self._source_for(chunk) for chunk in results[:5]])
+
+    @staticmethod
+    def _build_prompt(query: str, top_k: int | None) -> str:
+        top_k_instruction = f" Use at most {top_k} results." if top_k is not None else ""
+        return (
+            f"Answer this user question: {query}\n\n"
+            "Search the Lenny transcript corpus first using search_transcripts."
+            f"{top_k_instruction}"
+        )
 
     @staticmethod
     def _bounded_context(results: list[Any], max_chars: int = 12_000) -> str:
@@ -140,13 +153,20 @@ class LennyAgent:
         return "\n\n".join(blocks)
 
     @staticmethod
-    def _build_prompt(query: str, top_k: int | None) -> str:
-        top_k_instruction = f" Use at most {top_k} results." if top_k is not None else ""
-        return (
-            f"Answer this user question: {query}\n\n"
-            "Search the Lenny transcript corpus first using search_transcripts."
-            f"{top_k_instruction}"
-        )
+    def _bounded_history(history: list[tuple[str, str]], max_chars: int = 4_000) -> str:
+        lines: list[str] = []
+        total = 0
+        for query, answer in history[-6:]:
+            line = f"User: {query}\nAssistant: {answer}"
+            if total + len(line) > max_chars:
+                line = line[: max_chars - total].rstrip()
+            if not line:
+                break
+            lines.append(line)
+            total += len(line) + 2
+            if total >= max_chars:
+                break
+        return "\n\n".join(lines) or "(none)"
 
     @staticmethod
     def _sdk_api() -> tuple[Any, Any, Any, Any]:
@@ -157,27 +177,6 @@ class LennyAgent:
                 "claude-agent-sdk is not installed in the project environment"
             ) from exc
         return ClaudeSDKClient, tool, create_sdk_mcp_server, ClaudeAgentOptions
-
-    @staticmethod
-    def _make_sdk_tool(tool_decorator: Any, search_tool: TranscriptSearchTool) -> Any:
-        @tool_decorator(
-            "search_transcripts",
-            "Search Lenny podcast transcripts for grounded evidence.",
-            {
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string", "minLength": 1, "maxLength": 2000},
-                    "top_k": {"type": "integer", "minimum": 1, "maximum": 50},
-                    "episode": {"type": "string"},
-                    "guest": {"type": "string"},
-                },
-                "required": ["query"],
-            },
-        )
-        async def search_transcripts(arguments: dict) -> dict:
-            return await search_tool.search(arguments)
-
-        return search_transcripts
 
     @staticmethod
     def _text_blocks(message: Any) -> list[str]:
@@ -200,3 +199,69 @@ class LennyAgent:
             similarity_score=chunk.relevance_score,
             youtube_url=chunk.youtube_url,
         )
+
+
+class AgentConversation:
+    """Provider-neutral multi-turn state for one in-memory session."""
+
+    def __init__(self, agent: LennyAgent, session_id: str) -> None:
+        self.agent = agent
+        self.session_id = session_id
+        self.search_tool = TranscriptSearchTool(agent.retriever)
+        self.history: list[tuple[str, str]] = []
+        self._claude_client: Any | None = None
+        self._closed = False
+        self._lock = asyncio.Lock()
+
+    def rebind_agent(self, agent: LennyAgent) -> None:
+        self.agent = agent
+        self.search_tool.retriever = agent.retriever
+
+    async def ask(self, query: str, *, top_k: int | None = None) -> AgentAnswer:
+        normalized_query = query.strip()
+        if not normalized_query:
+            raise AgentError("query must not be empty")
+        if self._closed:
+            raise AgentError("session is closed")
+        async with self._lock:
+            logger.info("Continuing agent session: session_id=%s", self.session_id)
+            provider = getattr(self.agent.settings, "llm_provider", "claude").strip().lower()
+            try:
+                if provider == "claude":
+                    answer = await self._ask_claude(normalized_query, top_k)
+                elif provider == "ollama":
+                    self.search_tool.default_top_k = top_k
+                    answer = await self.agent._ask_ollama(
+                        normalized_query,
+                        self.search_tool,
+                        self.history,
+                    )
+                else:
+                    raise AgentConfigurationError(f"Unsupported LLM_PROVIDER: {provider}")
+            except AgentError:
+                raise
+            except Exception as exc:
+                logger.exception("Agent session request failed: session_id=%s", self.session_id)
+                raise AgentError("Agent session request failed") from exc
+            self.history.append((normalized_query, answer.answer))
+            return answer
+
+    async def _ask_claude(self, query: str, top_k: int | None) -> AgentAnswer:
+        if self._claude_client is None:
+            self._claude_client = self.agent._build_claude_client(self.search_tool)
+            await self._claude_client.__aenter__()
+        return await self.agent._run_claude_query(
+            self._claude_client,
+            query,
+            top_k,
+            self.search_tool,
+        )
+
+    async def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        if self._claude_client is not None:
+            await self._claude_client.__aexit__(None, None, None)
+            self._claude_client = None
+        logger.info("Agent session cleaned up: session_id=%s", self.session_id)

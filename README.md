@@ -14,3 +14,9 @@ uvicorn app.main:app --reload
 ```
 
 Set `DATABASE_URL`, `APP_ENV`, and `LOG_LEVEL` in `backend/.env`. Apply the schema from `backend/` with `alembic upgrade head`.
+
+Ingest a transcript directory from `backend/` with:
+
+```powershell
+python -m app.rag.cli .\path\to\transcripts
+```

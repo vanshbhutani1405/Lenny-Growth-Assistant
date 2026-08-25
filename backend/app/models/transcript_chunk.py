@@ -6,6 +6,11 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database.base import Base
 
+try:
+    from pgvector.sqlalchemy import Vector
+except ImportError:  # pragma: no cover - only used before optional dependencies are installed
+    Vector = None
+
 
 class TranscriptChunk(Base):
     __tablename__ = "transcript_chunks"
@@ -22,8 +27,10 @@ class TranscriptChunk(Base):
     publish_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     chunk_index: Mapped[int] = mapped_column(Integer)
     chunk_text: Mapped[str] = mapped_column(Text)
-    # The embedding dimension is intentionally deferred until the model is selected.
-    embedding: Mapped[list[float] | None] = mapped_column(JSON, nullable=True)
+    # BGE-small-en-v1.5 produces 384-dimensional vectors. JSON is a test/import fallback.
+    embedding: Mapped[list[float] | None] = mapped_column(
+        Vector(384) if Vector is not None else JSON, nullable=True
+    )
 
     @staticmethod
     def deterministic_id(episode_slug: str, chunk_index: int, chunk_text: str) -> str:

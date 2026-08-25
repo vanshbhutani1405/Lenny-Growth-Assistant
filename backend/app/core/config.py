@@ -8,6 +8,12 @@ class Settings(BaseSettings):
     app_env: str = Field(default="development", validation_alias="APP_ENV")
     log_level: str = Field(default="INFO", validation_alias="LOG_LEVEL")
     database_url: str = Field(..., validation_alias="DATABASE_URL")
+    embedding_model: str = Field(default="BAAI/bge-small-en-v1.5", validation_alias="EMBEDDING_MODEL")
+    embedding_dimension: int = Field(default=384, validation_alias="EMBEDDING_DIMENSION")
+    chunk_size_words: int = Field(default=400, validation_alias="CHUNK_SIZE_WORDS")
+    chunk_overlap_words: int = Field(default=60, validation_alias="CHUNK_OVERLAP_WORDS")
+    retrieval_top_k: int = Field(default=8, validation_alias="RETRIEVAL_TOP_K")
+    retrieval_min_score: float = Field(default=0.18, validation_alias="RETRIEVAL_MIN_SCORE")
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 

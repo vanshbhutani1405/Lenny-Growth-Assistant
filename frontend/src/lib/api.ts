@@ -29,6 +29,7 @@ export type AgentStreamEvent = {
   event: "session" | "workflow" | "token" | "sources" | "validation" | "done" | "error";
   data: Record<string, any>;
 };
+export type HealthStatus = { status: "ok"; provider: string; model: string };
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000").replace(/\/+$/, "");
 const NGROK_HEADERS = { "ngrok-skip-browser-warning": "true" };
@@ -47,6 +48,13 @@ export async function askAgent(query: string, sessionId?: string): Promise<Agent
   const body = await response.json().catch(() => ({}));
   if (!response.ok) throw apiError(body, "The backend is unavailable.");
   return body as AgentResponse;
+}
+
+export async function getHealthStatus(): Promise<HealthStatus> {
+  const response = await fetch(`${API_BASE}/api/v1/health`, { headers: NGROK_HEADERS });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw apiError(body, "Provider unavailable.");
+  return body as HealthStatus;
 }
 
 export async function clearSession(sessionId: string): Promise<void> {

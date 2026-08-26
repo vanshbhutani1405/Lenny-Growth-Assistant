@@ -1,6 +1,6 @@
 import { AlertCircle, Menu, PanelRight, RefreshCw, Search, ShieldCheck, Sparkles, WifiOff } from "lucide-react";
 import { useEffect, useState } from "react";
-import { clearSession, getSession, listSessions, streamAgent, type Source } from "./lib/api";
+import { clearSession, getHealthStatus, getSession, listSessions, streamAgent, type Source } from "./lib/api";
 import { detectWorkflow, type Workflow } from "./lib/workflows";
 import { ArtifactCard } from "./components/artifacts/ArtifactCard";
 import { ChatComposer } from "./components/chat/ChatComposer";
@@ -24,6 +24,8 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [statusIndex, setStatusIndex] = useState(0);
+  const [providerStatus, setProviderStatus] = useState("Provider status unavailable");
+  const [providerModel, setProviderModel] = useState<string | null>(null);
   const statusLabels = ["Searching Lenny's episodes...", "Analyzing evidence...", "Writing answer..."];
 
   useEffect(() => { localStorage.setItem(historyKey, JSON.stringify(conversations)); }, [conversations]);
@@ -41,6 +43,21 @@ export default function App() {
         return [...restored, ...items];
       });
     }).catch(() => undefined);
+  }, []);
+  useEffect(() => {
+    void getHealthStatus().then(({ provider, model }) => {
+      if (provider === "ollama") setProviderStatus("Running locally · Ollama");
+      else if (provider === "claude") setProviderStatus("Running in cloud · Claude");
+      else {
+        setProviderStatus("Provider status unavailable");
+        setProviderModel(null);
+        return;
+      }
+      setProviderModel(model);
+    }).catch(() => {
+      setProviderStatus("Provider status unavailable");
+      setProviderModel(null);
+    });
   }, []);
 
   const updateConversation = (id: string, updater: (item: Conversation) => Conversation) => {
@@ -107,7 +124,7 @@ export default function App() {
   return <div className="flex h-screen overflow-hidden bg-paper text-ink">
     <Sidebar collapsed={collapsed} onCollapse={() => setCollapsed(!collapsed)} onNew={newConversation} onSelect={selectConversation} onDelete={deleteConversation} conversations={conversations} activeId={conversation?.id ?? null} />
     <main className="flex min-w-0 flex-1 flex-col">
-      <header className="flex h-20 shrink-0 items-center justify-between border-b border-line bg-white/80 px-5 backdrop-blur md:px-9"><div className="flex items-center gap-3"><button className="rounded-lg p-2 text-slate-400 hover:bg-slate-50 md:hidden"><Menu size={19} /></button><div><div className="text-[11px] font-bold uppercase tracking-[.16em] text-slate-400">Knowledge workspace</div><h1 className="mt-1 text-lg font-bold tracking-[-.03em]">Ask better questions</h1></div></div><div className="hidden items-center gap-3 sm:flex"><span className="inline-flex items-center gap-1.5 text-xs text-slate-500"><span className="h-2 w-2 rounded-full bg-emerald-500" />Local knowledge base ready</span><button className="rounded-lg border border-line p-2 text-slate-400 hover:bg-slate-50 hover:text-ink" aria-label="Workspace panel"><PanelRight size={16} /></button></div></header>
+      <header className="flex h-20 shrink-0 items-center justify-between border-b border-line bg-white/80 px-5 backdrop-blur md:px-9"><div className="flex items-center gap-3"><button className="rounded-lg p-2 text-slate-400 hover:bg-slate-50 md:hidden"><Menu size={19} /></button><div><div className="text-[11px] font-bold uppercase tracking-[.16em] text-slate-400">Knowledge workspace</div><h1 className="mt-1 text-lg font-bold tracking-[-.03em]">Ask better questions</h1></div></div><div className="hidden items-center gap-3 sm:flex"><span className="inline-flex items-center gap-1.5 text-xs text-slate-500"><span className={`h-2 w-2 rounded-full ${providerStatus === "Provider status unavailable" ? "bg-amber-400" : "bg-emerald-500"}`} />{providerStatus}</span>{providerModel && <span className="rounded-md bg-slate-100 px-2 py-1 text-[10px] font-semibold text-slate-500">{providerModel}</span>}<button className="rounded-lg border border-line p-2 text-slate-400 hover:bg-slate-50 hover:text-ink" aria-label="Workspace panel"><PanelRight size={16} /></button></div></header>
       <div className="flex min-h-0 flex-1 flex-col"><div className="flex-1 overflow-y-auto"><div className="mx-auto w-full max-w-4xl px-5 pb-10 pt-10 md:px-10 md:pt-14">
         {!conversation ? <Welcome onSuggestion={(query) => void send(query)} /> : <div className="space-y-8">{conversation.messages.map((message) => <div key={message.id}><MessageBubble role={message.role} content={message.content} workflow={message.workflow} />{message.role === "assistant" && message.sources && <><SourcePanel sources={message.sources} />{message.workflow === "ship30" && message.content && <ArtifactCard content={message.content} />}</>}</div>)}{loading && <div className="flex items-center gap-3 text-sm text-muted"><div className="flex gap-1"><span className="h-1.5 w-1.5 animate-bounce rounded-full bg-blue-500" /><span className="h-1.5 w-1.5 animate-bounce rounded-full bg-blue-500 [animation-delay:120ms]" /><span className="h-1.5 w-1.5 animate-bounce rounded-full bg-blue-500 [animation-delay:240ms]" /></div>{statusLabels[statusIndex]}</div>}</div>}
         {error && <ErrorState message={error} onRetry={() => setError(null)} />}

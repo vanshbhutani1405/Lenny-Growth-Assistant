@@ -64,6 +64,38 @@ See `backend/.env.example` for the complete configuration. Keep secrets in local
 
 Streaming emits `session`, `workflow`, `token`, `sources`, `validation`, `done`, and `error` SSE events.
 
+## Running with Docker
+
+Docker Compose builds the FastAPI backend and the production nginx frontend. The backend runs Alembic migrations before starting Uvicorn.
+
+1. Copy `backend/.env.example` to `backend/.env` and set `DATABASE_URL`.
+2. For local Ollama, use:
+
+```env
+LLM_PROVIDER=ollama
+OLLAMA_BASE_URL=http://host.docker.internal:11434
+OLLAMA_MODEL=llama3.2:1b
+OLLAMA_TIMEOUT_SECONDS=300
+FRONTEND_ORIGIN=http://localhost:3000
+```
+
+Ollama runs outside the backend container on the host. Docker Compose provides `host.docker.internal` for the container-to-host connection. For Claude, use `LLM_PROVIDER=claude`, set `ANTHROPIC_API_KEY`, and configure `CLAUDE_MODEL` instead.
+
+The frontend API origin is configured at build time with `VITE_API_BASE_URL` and defaults to `http://localhost:8000`:
+
+```powershell
+$env:VITE_API_BASE_URL = "http://localhost:8000"
+docker compose up --build
+```
+
+Open the frontend at [http://localhost:3000](http://localhost:3000). The backend and API documentation are available at [http://localhost:8000](http://localhost:8000) and [http://localhost:8000/docs](http://localhost:8000/docs). Stop the stack with:
+
+```powershell
+docker compose down
+```
+
+Required backend configuration includes `DATABASE_URL`, `APP_ENV`, `LOG_LEVEL`, provider settings, and any required Claude/LangSmith variables. Secrets belong in `backend/.env`, not Dockerfiles or frontend build variables.
+
 ## Documentation and demo
 
 - [Manual testing plan](manual-testing.md)

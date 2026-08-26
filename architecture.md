@@ -1,78 +1,82 @@
 # Architecture
 
-## System overview
+![Lenny Growth Assistant Architecture](architecture.png)
 
-Lenny Growth Assistant is a FastAPI backend and React/Vite frontend for asking product and growth questions over the selected indexed Lenny transcript corpus. Retrieval produces inspectable evidence; providers generate grounded prose from that evidence.
+The image above is the supplied repository-level architecture visual. The diagrams below describe the executable boundaries in the current codebase.
+
+## System architecture
 
 ```mermaid
 flowchart LR
-  UI[React frontend] --> API[FastAPI API]
-  API --> S[SessionManager]
-  API --> W[WorkflowRouter]
-  W --> A[Provider-neutral AgentConversation]
-  A --> R[AgentToolRegistry]
-  R --> T[search_transcripts]
-  T --> RET[Retriever]
-  RET --> DB[(Supabase PostgreSQL + pgvector)]
-  A --> O[Ollama provider]
-  A --> C[Claude Agent SDK]
-  API -. optional tracing .-> L[LangSmith]
+  UI[React/Vite frontend] --> API[FastAPI API]
+  API --> SM[SessionManager]
+  SM --> PG[(PostgreSQL / Supabase)]
+  API --> WR[WorkflowRouter]
+  WR --> AC[AgentConversation]
+  AC --> TR[AgentToolRegistry]
+  TR --> ST[search_transcripts]
+  ST --> RET[Retriever]
+  RET --> V[(pgvector transcript_chunks)]
+  AC --> O[Ollama provider]
+  AC --> C[Claude Agent SDK provider]
+  API -. optional tracing .-> LS[LangSmith]
 ```
+
+The frontend never receives provider secrets. The backend owns provider selection, database access, transcript retrieval, session persistence, and tool execution.
 
 ## Request lifecycle
 
-1. The frontend posts a query and optional `session_id`.
-2. FastAPI validates the request and supplies a request-scoped async database session.
-3. `SessionManager` creates or resumes an `AgentConversation`.
+1. The frontend sends a query and optional `session_id` to `/api/v1/agent/ask` or `/api/v1/agent/ask/stream`.
+2. FastAPI validates the request and supplies a request-scoped async SQLAlchemy session.
+3. `SessionManager` creates a durable `conversation_sessions` row or loads the requested session and ordered `conversation_messages` history.
 4. `WorkflowRouter` selects `grounded_qa`, `research_synthesis`, or `ship30`.
-5. Transcript-related work calls `search_transcripts`, which reuses the existing retriever.
-6. The selected provider generates from bounded transcript context and bounded conversational history.
-7. The API returns the answer and source metadata, or SSE events for streaming.
+5. Transcript-related work calls `search_transcripts`, which uses the current request-scoped `Retriever`.
+6. The selected provider receives bounded conversation context and retrieved evidence. Conversation history is context only; it is not transcript evidence.
+7. Successful turns persist user and assistant messages. Streaming persists the assistant message only after successful completion.
+8. The API returns JSON or SSE events with the session, workflow, answer, sources, validation, completion, and errors.
 
 ## RAG pipeline
 
-The selected corpus is indexed with local `BAAI/bge-small-en-v1.5` embeddings at 384 dimensions. PostgreSQL/pgvector performs semantic cosine retrieval and PostgreSQL full-text search supplies keyword candidates. The existing retrieval layer merges and ranks candidates and supports one corrective retrieval attempt. Transcript metadata remains attached to each result: episode slug, guest, title, URL, chunk index, stable chunk ID, and score.
+The selected transcript corpus is normalized, chunked, and embedded locally with `BAAI/bge-small-en-v1.5` at 384 dimensions. Chunks and source metadata are stored in PostgreSQL with pgvector. The active `Retriever` performs cosine similarity search and applies configured top-k, minimum-score, episode, and guest filters.
 
-Conversation history is context only. It is never returned as transcript evidence and does not replace fresh retrieval on transcript-related turns.
+`backend/app/rag/retrieval.py` also contains a bounded hybrid/corrective retrieval service combining semantic and PostgreSQL keyword candidates. The current agent tool is wired to `backend/app/rag/retriever.py`; therefore hybrid/corrective retrieval is an available service boundary, not a claim that every production agent request currently uses it.
 
-## Agent and tool architecture
+Every returned source preserves episode slug, guest, title, URL, chunk index, stable chunk ID, text, and similarity information where available.
 
-The central `AgentToolRegistry` exposes:
+## Agent, tools, and workflows
 
-- `search_transcripts` — structured transcript retrieval through the existing retriever.
-- `validate_ship30_draft` — validates Ship 30 structure and returns issues/redraft guidance.
-- `create_artifact` — produces structured Markdown/HTML artifact output for the UI.
+The central `AgentToolRegistry` exposes exactly the current product tools:
 
-Claude uses the Claude Agent SDK with in-process MCP registration. Ollama uses the same provider-neutral agent workflow rather than a second RAG implementation.
+- `search_transcripts`: retrieves structured transcript evidence through the existing retriever.
+- `validate_ship30_draft`: checks Ship 30 structure and returns validation issues/redraft guidance.
+- `create_artifact`: produces structured Markdown/HTML artifact output for the UI.
 
-## Workflow routing
-
-- `grounded_qa`: answer a direct transcript-grounded question.
-- `research_synthesis`: compare themes and patterns across retrieved episodes.
-- `ship30`: draft, validate, and optionally perform one controlled redraft.
+Claude uses the Claude Agent SDK and in-process MCP registration. Ollama uses the same provider-neutral orchestration and tool contracts. `WorkflowRouter` selects the grounded QA, research/synthesis, or Ship 30 path; the Ship 30 flow permits at most one controlled validation/redraft cycle.
 
 ## Provider architecture
 
-Configuration selects `claude` or `ollama`. Claude uses `ANTHROPIC_API_KEY` and `CLAUDE_MODEL`; Ollama uses `OLLAMA_BASE_URL`, `OLLAMA_MODEL=llama3.2:1b`, and `OLLAMA_TIMEOUT_SECONDS`. Provider keys remain backend-only.
+`LLM_PROVIDER` selects `ollama` or `claude`. Ollama uses `OLLAMA_BASE_URL`, `OLLAMA_MODEL`, and configurable `OLLAMA_TIMEOUT_SECONDS`; Claude uses `ANTHROPIC_API_KEY` and `CLAUDE_MODEL`. Normal and SSE generation share the provider abstraction, and provider status is exposed by the backend health endpoint for the UI.
 
 ## Session architecture
 
-`SessionManager` maintains stable 24-hour in-memory sessions. Each contains an `AgentConversation`, bounded history, and cleanup/clear behavior. Claude reuses one interactive `ClaudeSDKClient` per live session. Ollama receives bounded prior turns on subsequent requests. The retriever is rebound to the current request-scoped database session.
+`ConversationSession` and `ConversationMessage` are durable PostgreSQL models introduced by Alembic revision `0003_conversation_sessions`. `SessionManager` is the single session abstraction: it creates, loads, lists, updates, and deletes durable sessions, loads ordered history on continuation, and persists successful turns.
 
-Current limitation: in-memory sessions do not survive a backend restart and are not authenticated or user-isolated. PostgreSQL stores transcript knowledge data, not durable conversation history, in the current milestone.
+The manager also keeps bounded live `AgentConversation` state in memory for provider execution and expires that optimization after 24 hours via `cleanup_expired()`. Expiration removes only the in-memory execution state; PostgreSQL remains the source of truth and can reconstruct a session after restart. Claude can reuse its live interactive client while present; Ollama reconstructs bounded context from persisted messages. No authentication or user ownership boundary exists yet.
 
 ## Streaming architecture
 
-`POST /api/v1/agent/ask/stream` uses Server-Sent Events. Retrieval completes before generation; only generated text is streamed. Event types are `session`, `workflow`, `token`, `sources`, `validation`, `done`, and `error`. The frontend incrementally appends token events and preserves partial output on failure.
+`POST /api/v1/agent/ask/stream` uses Server-Sent Events. Retrieval completes before generation; only generated provider output is streamed. Event types are `session`, `workflow`, `token`, `sources`, `validation`, `done`, and `error`. The user message is persisted when streaming begins; the assistant message is persisted only after successful completion, so a failed partial stream is not stored as a completed answer.
 
 ## Observability
 
-LangSmith is optional and configured with `LANGCHAIN_TRACING_V2`, `LANGCHAIN_API_KEY`, and `LANGCHAIN_PROJECT`. Existing tracing/logging covers API, workflow, retrieval/tool, embedding/provider, generation, validation, artifacts, and failures where supported. The application must continue without LangSmith credentials.
+LangSmith is optional and configured with `LANGCHAIN_TRACING_V2`, `LANGCHAIN_API_KEY`, and `LANGCHAIN_PROJECT`. Structured tracing/logging is present around API/workflow execution, retrieval and tools, embedding/query stages where instrumented, provider generation, Ship 30 validation/redraft, artifact generation, and failures. Missing LangSmith credentials must not block local Ollama execution.
 
 ## Security boundaries
 
-Transcript text is evidence, not instructions. Prompts require grounded answers and explicit insufficiency when evidence is weak. Provider and LangSmith secrets stay on the backend. Generated HTML is untrusted and must be sanitized or isolated before production use. Current in-memory sessions require a future authentication/ownership layer for multi-user deployment.
+Transcript text is evidence, not instructions. Grounding prompts require evidence-backed claims and explicit insufficiency. Provider and LangSmith secrets stay backend-only. Generated HTML is untrusted and requires sanitization or isolation verification before treating it as production-safe. Durable sessions currently lack authentication and ownership checks, so this is a single-user/local or trusted-environment architecture.
 
-## Architecture image placeholder
+## Known boundaries
 
-Add the final annotated architecture image at `photos/architecture.png` when available.
+- The indexed corpus is intentionally limited to the selected episodes.
+- Live Supabase, Ollama, Claude, LangSmith, and Docker behavior must be verified in the target environment.
+- A measured retrieval benchmark and formal artifact sandbox verification remain follow-up work.

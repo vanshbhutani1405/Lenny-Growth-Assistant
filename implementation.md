@@ -1,33 +1,27 @@
-# Implementation Notes
+# Implementation notes
 
-## Why the boundaries exist
+## Knowledge layer
 
-FastAPI routes handle validation and transport. RAG modules handle transcript retrieval. Provider adapters hide Ollama/Claude differences. The agent layer owns tool orchestration and workflow behavior. This keeps retrieval testable without an LLM and keeps providers replaceable without changing transcript indexing.
+Transcript loading is separated from normalization, chunking, embedding, and persistence. Chunk IDs are deterministic so ingestion can be safely retried. SQLAlchemy 2.x and Alembic keep the PostgreSQL schema explicit; pgvector stores 384-dimensional BGE embeddings. Ingestion persists bounded batches with PostgreSQL upsert semantics and explicit rollback handling.
 
-## Retrieval and grounding
+The active query path uses a request-scoped `Retriever`, which generates a BGE query embedding and performs a vector-oriented database query with configured top-k, minimum score, and metadata filters. A separate `RetrievalService` provides hybrid keyword/semantic merging and one corrective attempt; this is retained as an independently testable capability and is not silently represented as active in every agent path.
 
-The same local BGE model is used for corpus and query embeddings. pgvector provides cosine similarity, while PostgreSQL keyword search improves exact-term recall. Results carry source metadata into the final response. Context is bounded before generation, and empty/weak retrieval is handled explicitly.
+## Agent boundary
 
-## Agent tools
+`LennyAgent` owns orchestration, while tools adapt existing services to the Claude Agent SDK/MCP contract. The registry keeps tool names, schemas, descriptions, and registration centralized. Ollama and Claude implement the same provider-facing workflow shape, so local testing does not require changing the RAG layer.
 
-Tools are registered centrally and return structured data. `search_transcripts` delegates to the existing retriever rather than duplicating SQL or ranking logic. Ship 30 validation is bounded to one corrective redraft. Artifact generation is kept separate from retrieval.
+## Durable sessions
 
-## Provider switching
-
-Ollama supports local development without an Anthropic key. Claude Agent SDK remains the production agent runtime. Both paths consume the same workflow concepts, source mappings, and session context.
-
-## Sessions and history
-
-The current implementation uses a 24-hour in-memory `SessionManager`. Claude retains one interactive client per active session; Ollama is passed bounded prior conversation turns. Fresh transcript retrieval remains independent from prior assistant prose.
+The original live-session optimization remains, but PostgreSQL is now durable source of truth. `conversation_sessions` stores session metadata and timestamps; `conversation_messages` stores ordered user/assistant turns. `SessionManager` loads history before provider execution, bounds it before provider execution, persists successful turns, deletes cascaded data, and evicts only live provider context after 24 hours. Streaming writes the user turn at request start and writes the assistant turn only after successful completion.
 
 ## Streaming
 
-SSE was chosen for one-way incremental generation over the existing HTTP API. Retrieval is deliberately not streamed. The client receives explicit lifecycle, token, source, validation, completion, and error events.
+SSE was chosen because the product streams generated text but does not need bidirectional transport. Retrieval completes first, then provider tokens are emitted as `token` events. Session/workflow context, sources, validation, completion, and errors use typed events that the frontend can handle incrementally.
 
 ## Frontend
 
-The frontend uses a light editorial layout with a sidebar, chat workspace, workflow states, markdown messages, source/evidence cards, Ship 30 artifact presentation, loading/error states, local browser history, and backend-backed deletion when a server session ID exists.
+The React/Vite client keeps a browser cache for responsive sidebar state but uses backend session list/detail/delete endpoints as the durable source. It renders Markdown, evidence cards, workflow badges, provider status, artifacts, loading states, and partial streams.
 
-## Known scope boundary
+## Verification posture
 
-The selected corpus is intentionally limited to the successfully indexed episodes. Durable PostgreSQL conversation persistence, authentication, multi-user ownership, and deployment automation are follow-up work unless separately added.
+This repository contains focused tests and compile/migration commands. Live database persistence, provider calls, LangSmith traces, and Docker runtime are environment-dependent and must be verified at submission time rather than inferred from source alone.

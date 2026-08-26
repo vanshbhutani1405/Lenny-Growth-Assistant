@@ -20,9 +20,9 @@ Claude tools are registered through the SDK’s in-process MCP architecture. Thi
 
 SSE is sufficient for one-way token delivery and works naturally with the browser Fetch/ReadableStream client. Retrieval remains a completed prerequisite rather than an artificial stream.
 
-## In-memory sessions
+## Durable sessions with bounded live context
 
-The 24-hour manager is intentionally small and fast for the assignment. The tradeoff is loss on backend restart and no authenticated ownership. Durable sessions are a clear next architectural step.
+PostgreSQL is the source of truth for session identifiers, ordered messages, timestamps, and provider/workflow metadata. `SessionManager` keeps bounded live provider context in memory for latency and Claude client reuse, evicts that optimization after 24 hours, and reconstructs it from PostgreSQL when needed. This preserves restart continuity without creating a second session system. Authentication and ownership remain future work.
 
 ## Bounded context
 

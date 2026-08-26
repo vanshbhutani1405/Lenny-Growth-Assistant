@@ -1,46 +1,27 @@
-# Manual Testing Plan
+# Manual end-to-end test plan
 
-Run the backend and frontend with `LLM_PROVIDER=ollama` for the local path. Do not use production secrets in a local environment.
+Record date, worktree state, provider, model, database target, and pass/fail for each case. Never record API keys, database passwords, or private URLs.
 
-## Grounded QA and sources
+| ID | Scenario | Procedure | Expected result |
+|---|---|---|---|
+| QA-01 | Grounded Q&A | Ask a product/growth question | Answer is grounded, workflow badge is shown, sources are expandable |
+| QA-02 | Follow-up | Ask a follow-up that refers to the previous turn | Same session understands conversational context and performs fresh transcript retrieval |
+| QA-03 | Evidence | Inspect at least two source cards | Episode, guest, URL, chunk ID/index, excerpt, and score are visible where returned |
+| QA-04 | Insufficient evidence | Ask for a fact outside the corpus | System explicitly says evidence is insufficient; no invented citation appears |
+| SES-01 | Create/continue | Start without `session_id`, then submit another turn | A stable ID is returned and the second turn continues the session |
+| SES-02 | Restart persistence | Complete a turn, restart backend, reload session from sidebar | PostgreSQL-backed session and ordered messages reload; provider live state may be reconstructed |
+| SES-03 | Delete | Delete the active sidebar conversation | Backend DELETE succeeds, local state/messages disappear, and a new conversation starts |
+| STR-01 | Streaming | Submit a normal QA request | Session/workflow events arrive, tokens render incrementally, then sources and done arrive |
+| STR-02 | Partial failure | Stop/unavailable provider during a stream | Error is visible, partial text is handled gracefully, and no fake completed assistant turn is persisted |
+| RES-01 | Research & Synthesis | Ask for cross-episode themes/comparisons | Structured synthesis preserves source attribution |
+| SHIP-01 | Ship 30 | Request a Ship 30 draft | Draft appears as an artifact/document view with sources and validation status |
+| SHIP-02 | Validation/redraft | Trigger a weak draft case | Validation issues are visible and at most one controlled redraft occurs |
+| ART-01 | Artifact | Generate Markdown/HTML artifact and use copy/download | Output is complete and UI action works; treat HTML as untrusted |
+| OPS-01 | Ollama outage/timeout | Stop Ollama or use an unreachable base URL | Structured provider error and useful backend log; UI remains usable |
+| OPS-02 | Provider status | Open the app with Ollama and Claude configurations | Sidebar/header reflects backend-reported provider/model or shows the explicit fallback |
+| OBS-01 | LangSmith | Configure tracing credentials and make one request | Trace shows API/workflow/tool/retrieval/provider/generation timing without secrets |
+| API-01 | URL/CORS | Use browser devtools Network tab | Requests have one `/api` prefix, expected origin, and the ngrok warning header where configured |
 
-1. Ask: “What does Lenny say about product-market fit?”
-2. Confirm the workflow indicator is Grounded Q&A.
-3. Confirm the answer is non-empty and source cards show episode, guest, title, chunk ID/index, URL, evidence, and similarity.
-4. Expand a source and compare the claim with the displayed transcript evidence.
-5. Ask an unsupported or highly specific question. Confirm the assistant explicitly says the available evidence is insufficient and does not fabricate citations.
+## Evidence to collect
 
-## Follow-ups and sessions
-
-1. Ask a first question, then ask “What examples did he give?” in the same session.
-2. Confirm the second turn understands the conversation while performing fresh transcript retrieval.
-3. Start a new conversation and verify it cannot see the previous session’s history.
-4. Delete a conversation from the sidebar. Confirm the confirmation prompt, backend DELETE call, local removal, and active-chat reset.
-5. Submit an unknown session ID and confirm a structured 404.
-6. Verify the documented limitation that current in-memory sessions do not survive a backend restart.
-
-## Streaming
-
-1. Use the frontend or `POST /api/v1/agent/ask/stream`.
-2. Confirm `session`, `workflow`, progressive `token`, `sources`, `done`, and any applicable `validation` events.
-3. Stop Ollama during generation. Confirm an `error` event, an understandable UI error, and no false completed state.
-
-## Research & Synthesis
-
-Ask for common patterns across successful growth loops or compare advice from multiple episodes. Confirm structured sections, cross-episode evidence, and source attribution.
-
-## Ship 30 and artifacts
-
-1. Request a Ship 30 essay from grounded material.
-2. Confirm hook, headings, skimmable prose, takeaways, validation status, and sources.
-3. Confirm the UI supports copy and download actions where returned by the current artifact response.
-4. Exercise a validation failure if available and confirm at most one controlled redraft.
-5. Request an artifact and verify Markdown/HTML presentation, preview/code behavior, and safe failure handling. Treat generated HTML as untrusted.
-
-## Dependency failures
-
-Use an unreachable Ollama URL or stop the local service. Confirm timeout/provider errors are actionable. Exercise empty retrieval and a database outage in a safe environment to verify structured errors.
-
-## LangSmith
-
-With credentials configured, inspect traces for request, workflow, retrieval, tool calls, provider/model, latency, generation, sources, validation, artifact work, and errors. Remove credentials and verify the application still runs normally.
+Capture sanitized screenshots of the main UI, evidence panel, Ship 30 artifact, streaming state, persisted sidebar session, and provider status. Add them under `photos/` only after behavior is demonstrated. Keep `architecture.png` as the architecture visual.

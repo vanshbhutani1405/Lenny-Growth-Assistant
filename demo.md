@@ -1,25 +1,19 @@
-# 3–5 Minute Demo
+# Three-to-five minute demo
 
-## 1. Frame the product — 30 seconds
+## Before the demo
 
-“This is a transcript-grounded growth workspace. It searches Lenny’s indexed episodes, exposes the evidence behind answers, and turns insights into reusable writing.”
+1. Start PostgreSQL/Supabase with the selected transcript data and apply migrations.
+2. Start Ollama with `llama3.2:1b`, or configure Claude with a valid backend-only key.
+3. Start the backend and frontend. Confirm the provider indicator reports the configured backend provider.
+4. Open the browser with LangSmith tracing enabled only if credentials are available.
 
-## 2. Grounded answer — 60 seconds
+## Flow
 
-Ask “What does Lenny say about product-market fit?” Show the streaming response, Grounded Q&A indicator, and expandable evidence card. Open a source to demonstrate episode metadata, URL, chunk, and similarity.
+1. **Grounded Q&A (45 seconds):** Ask, “What does Lenny say about product-market fit?” Show the concise answer, workflow badge, streamed tokens, and expandable evidence cards. Open one source URL and point out episode, guest, chunk, and similarity metadata.
+2. **Follow-up (30 seconds):** Ask, “What examples did he give?” in the same session. Show that the session continues while transcript evidence is retrieved for the new turn.
+3. **Research & Synthesis (45 seconds):** Ask for recurring patterns in onboarding or growth across several guests. Highlight structured themes and source attribution.
+4. **Ship 30 (60 seconds):** Request a Ship 30-style essay on one grounded product lesson. Show validation status, the artifact card, and copy/download actions. Explain that validation allows at most one controlled redraft.
+5. **Persistence and deletion (30 seconds):** Refresh the page or restart the backend, reload the session from the sidebar, then delete it and show the empty/new conversation state.
+6. **Resilience and observability (30 seconds):** Briefly show the provider status, an insufficient-evidence response, and the LangSmith trace if configured. If Ollama is unavailable, show the structured failure state rather than hiding it.
 
-## 3. Follow-up — 40 seconds
-
-Ask “What examples did he give?” Highlight the stable session and conversational continuity, then point out that transcript evidence remains separately retrieved.
-
-## 4. Research — 45 seconds
-
-Ask for patterns behind successful growth loops. Show the synthesis sections and multiple supporting episodes.
-
-## 5. Ship 30 — 60 seconds
-
-Ask for a Ship 30 essay about finding product-market fit. Show the draft, validation status, source panel, and artifact copy/download actions.
-
-## 6. Reliability — 30 seconds
-
-Show an insufficient-evidence response or stop Ollama and demonstrate the actionable error state. Close with the architecture diagram and optional LangSmith trace.
+Do not claim live provider, database, LangSmith, or Docker behavior unless it was verified in the demo environment.

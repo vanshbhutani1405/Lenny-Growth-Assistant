@@ -18,7 +18,7 @@ Anthropic and LangSmith keys are backend-only environment variables. Never expos
 
 ## Session limitations
 
-Current sessions are in-memory, expire after 24 hours, and have no authentication or user ownership. They are appropriate for an internal assignment prototype, not a multi-tenant deployment. Durable, user-owned sessions require a future persistence/authentication layer.
+Session identifiers and conversation messages are persisted in PostgreSQL, while live provider clients and bounded execution context remain in memory and expire after 24 hours. There is no authentication or user ownership check, so a session ID is not a security boundary. The current design is appropriate for a local/internal assignment prototype, not a multi-tenant deployment.
 
 ## Errors and logging
 

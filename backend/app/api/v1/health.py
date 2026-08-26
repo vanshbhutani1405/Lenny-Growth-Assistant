@@ -12,7 +12,15 @@ router = APIRouter(tags=["health"])
 
 @router.get("/health", response_model=HealthResponse)
 async def health() -> HealthResponse:
-    return HealthResponse(status="ok", environment=get_settings().app_env)
+    settings = get_settings()
+    provider = settings.llm_provider.strip().lower()
+    model = settings.ollama_model if provider == "ollama" else settings.claude_model
+    return HealthResponse(
+        status="ok",
+        environment=settings.app_env,
+        provider=provider,
+        model=model,
+    )
 
 
 @router.get("/health/db", response_model=DatabaseHealthResponse)

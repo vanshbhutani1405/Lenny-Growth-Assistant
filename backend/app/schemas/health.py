@@ -6,6 +6,8 @@ from pydantic import BaseModel
 class HealthResponse(BaseModel):
     status: Literal["ok"]
     environment: str
+    provider: str
+    model: str
 
 
 class DatabaseHealthResponse(BaseModel):
